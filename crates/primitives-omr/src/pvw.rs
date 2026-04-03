@@ -6,8 +6,8 @@
 //! Parameters:
 //! - Dimension n = 25
 //! - Modulus q = 65537 (matches BFV plaintext modulus for direct embedding)
-//! - Error bound B = 64 (small relative to q)
-//! - Detection threshold: q/4 = 16384
+//! - Error bound B = 16 (small noise for information-theoretic hiding)
+//! - Detection threshold: q/512 = 128
 //!
 //! Security: ~65-80 bit PQ security at n=25. Protects metadata (which notes are
 //! for which recipient), not note content (protected by ML-KEM-768 = NIST L3).

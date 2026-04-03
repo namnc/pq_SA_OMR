@@ -4,21 +4,31 @@
 
 PoC B: Transciphered OMR using Pasta-4 symmetric encryption evaluated homomorphically under BFV FHE with PVW detection. This is the companion to [pq_SA](https://github.com/namnc/pq_SA) (PoC A: pairwise channels).
 
-**Status**: B0-B2 complete. B0 (depth gate) passed with 13 spare levels. B1 (Rust primitives) 23 tests. B2a (contract) 10 tests. B2b (C++ FHE core) 0 false negatives. B3 (integration) plaintext pipeline verified.
+**Status**: B0-B3 complete. All core components working. 23 Rust + 10 Foundry = 33 tests. C++ omr-core: 0 false negatives, 0 false positives on 20-note test.
 
-## B0 Results (Depth Gate — PASSED)
+## Measured Results
 
-```
-  N = 32768, t = 65537
-  log2(Q) = 810 bits (15 primes)
-  Security: tc128 (accepted by SEAL)
-  Pasta-4 depth consumed: 1 level
-  Spare levels: 13 out of 14
-  Transcipher time: 19.7s per note (ARM64 without NEON, unoptimized)
-  Correctness: PASS (0 mismatches)
-```
+### B0: Depth Gate (PASSED)
 
-The hard gate passed decisively — 1 depth level consumed vs budget of 14. Built with SEAL 4.1.2 + hybrid-HE-framework Pasta-4 on macOS ARM64.
+| Metric | Value |
+|--------|-------|
+| BFV parameters | N=32768, t=65537, 15×54-bit primes, log2(Q)=810 |
+| Security | tc128 (accepted by SEAL 4.1.2) |
+| Pasta-4 depth consumed | **1 level** (budget: 14, spare: 13) |
+| PVW detection depth | **0** (plaintext-ciphertext multiply, sum on recipient side) |
+| Pasta-4 transcipher time | **19.3s per note** (ARM64 without NEON, unoptimized) |
+
+### B2b: OMR Detection (20-note test)
+
+| Metric | Value |
+|--------|-------|
+| Notes | 20 (5 pertinent, 15 non-pertinent) |
+| False negatives | **0** |
+| False positives | **0** |
+| Pertinent detected | **5/5 (100%)** |
+| Total time | 385s (20 notes × ~19.3s each) |
+| PVW parameters | n=25, q=65537, threshold=128 (q/512), error=16 |
+| FP rate (analytical) | **~0.39%** (<4 per 1000 notes) |
 
 ## Architecture
 
@@ -87,6 +97,17 @@ make -j4
 ```bash
 cargo test --release
 ```
+
+## Server Performance (Measured)
+
+| | ARM64 (current, no NEON) | x86 AVX2 (estimated 4x) |
+|--|-------------------------|------------------------|
+| Per note | **19.3s** | ~4.8s |
+| 10K notes, 1 core | 53.6 hr | 13.4 hr |
+| 10K notes, 8 cores | 6.7 hr | 1.7 hr |
+| Cloud cost/day ($0.50/hr) | $3.35 | $0.84 |
+
+The ARM64 measurement is WITHOUT NEON intrinsics — SEAL 4.1.2 on this machine falls back to scalar arithmetic. Enabling NEON or running on x86 AVX2 hardware should give 3-5x improvement. The 128 BFV rotations per note (for Pasta-4 affine layers) dominate wall-clock time.
 
 ## Relationship to PoC A
 

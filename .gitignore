@@ -1,0 +1,20 @@
+# Rust
+/target
+
+# C++ builds
+b0/build/
+omr-core/build/
+
+# Cloned dependencies (rebuild from source)
+b0/hybrid-HE-framework/
+
+# Foundry
+contracts/out
+contracts/cache
+contracts/lib
+
+# OS
+.DS_Store
+
+# Secrets
+.env
