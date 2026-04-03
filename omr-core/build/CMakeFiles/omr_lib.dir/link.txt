@@ -1,0 +1,2 @@
+/usr/bin/ar qc libomr_lib.a CMakeFiles/omr_lib.dir/src/pvw_he.cpp.o
+/usr/bin/ranlib libomr_lib.a

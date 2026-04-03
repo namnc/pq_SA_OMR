@@ -1,0 +1,2 @@
+/usr/bin/ar qc libkeccak.a "CMakeFiles/keccak.dir/hybrid-HE-framework/util/keccak/KeccakSpongeWidth1600.c.o" "CMakeFiles/keccak.dir/hybrid-HE-framework/util/keccak/KeccakHash.c.o" "CMakeFiles/keccak.dir/hybrid-HE-framework/util/keccak/opt64/KeccakP-1600-opt64.c.o"
+/usr/bin/ranlib libkeccak.a

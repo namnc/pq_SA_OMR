@@ -1,0 +1,2 @@
+/usr/bin/ar qc libcommon_zp.a "CMakeFiles/common_zp.dir/hybrid-HE-framework/ciphers/common_Zp/SEAL_Cipher.cpp.o"
+/usr/bin/ranlib libcommon_zp.a

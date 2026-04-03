@@ -1,0 +1,2 @@
+/usr/bin/ar qc libpasta4_plain.a "CMakeFiles/pasta4_plain.dir/hybrid-HE-framework/ciphers/pasta_4/plain/pasta_4_plain.cpp.o"
+/usr/bin/ranlib libpasta4_plain.a

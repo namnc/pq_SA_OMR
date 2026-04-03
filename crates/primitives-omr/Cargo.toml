@@ -1,0 +1,13 @@
+[package]
+name = "primitives-omr"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rand.workspace = true
+rand_chacha.workspace = true
+sha2.workspace = true
+sha3 = "0.10"
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
