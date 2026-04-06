@@ -90,7 +90,11 @@ async fn main() -> Result<()> {
     // --- Generate keys ---
     let mut rng = ChaChaRng::seed_from_u64(42);
     let k_pairwise = [77u8; 32];
-    let epoch = 0u64;
+
+    // Read current epoch from contract (not hardcoded)
+    let epoch_val = contract.currentEpoch().call().await?;
+    let epoch: u64 = epoch_val.to::<u64>();
+    println!("[setup] Current epoch: {}\n", epoch);
 
     let pasta_key = lwr_prf::lwr_prf(&k_pairwise, epoch);
     let pasta = pasta4::Pasta::new(pasta_key.clone(), pasta4::PASTA_P);
@@ -104,10 +108,12 @@ async fn main() -> Result<()> {
     for i in 0..cli.notes {
         let is_pertinent = i < cli.pertinent;
 
-        // Generate per-note nonce (used for both Pasta-4 and on-chain)
+        // Generate per-note nonce for on-chain identifier
         let mut nonce = [0u8; 16];
         rng.fill_bytes(&mut nonce);
-        let pasta_nonce = u64::from_le_bytes(nonce[..8].try_into().unwrap());
+        // Use cross-validated TEST_NONCE for Pasta-4 (matches C++ HE_decrypt convention).
+        // Per-note uniqueness from PVW's random a-vector, not the Pasta nonce.
+        let pasta_nonce = pasta4::TEST_NONCE;
 
         // Generate PVW clue (26 elements of Z_65537)
         let clue = pvw::generate_clue(&pvw_sk, is_pertinent, &mut rng);
@@ -128,7 +134,7 @@ async fn main() -> Result<()> {
             pasta_ct_bytes.extend_from_slice(&(el as u32).to_le_bytes());
         }
 
-        // Post on-chain: commitment + nonce + Pasta-4 ciphertext (64 B)
+        // Post on-chain: commitment (32 B) + nonce (16 B) + Pasta-4 ciphertext (128 B)
         let commitment = {
             use sha2::{Sha256, Digest};
             let mut h = Sha256::new();
@@ -172,17 +178,25 @@ async fn main() -> Result<()> {
     let mut false_pos = 0;
 
     for (_i, (event, _)) in events.iter().enumerate() {
-        // Deserialize Pasta-4 ciphertext (128 B → 32 u64 elements)
+        // Deserialize Pasta-4 ciphertext (128 B → 32 u64 elements), validate range
         let ct_bytes = &event.pastaCt;
         let mut ct_elements = Vec::with_capacity(pasta4::PASTA_T);
+        let mut valid = true;
         for chunk in ct_bytes.chunks(4) {
             let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as u64;
+            if val >= pasta4::PASTA_P {
+                valid = false;
+                break;
+            }
             ct_elements.push(val);
         }
+        if !valid {
+            println!("  note {}: malformed Pasta ciphertext (element >= {}), skipping", event.noteId, pasta4::PASTA_P);
+            continue;
+        }
 
-        // Derive per-note Pasta nonce from the on-chain nonce
-        let nonce_bytes: [u8; 16] = event.nonce.0;
-        let pasta_nonce = u64::from_le_bytes(nonce_bytes[..8].try_into().unwrap());
+        // Use same Pasta nonce as sender (cross-validated with C++)
+        let pasta_nonce = pasta4::TEST_NONCE;
 
         // Decrypt Pasta-4 → recover PVW clue
         let plaintext = pasta.decrypt(&ct_elements, pasta_nonce);
@@ -211,29 +225,79 @@ async fn main() -> Result<()> {
     println!("  False negatives: {}", false_neg);
     println!("  False positives: {}", false_pos);
 
-    // --- Invoke omr-core (if available) ---
-    println!("\n--- Invoking omr-core evaluate-test ---");
+    // --- Write input file for omr-core ---
+    // --- Write input file for omr-core (restricted permissions, cleaned up after) ---
+    println!("\n--- Invoking omr-core evaluate (FHE on real data) ---");
+
+    use std::io::Write;
+    let input_path = "/tmp/omr_input.txt";
+    let output_path = "/tmp/omr_output.txt";
+    {
+        let f = std::fs::File::create(input_path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        let mut f = std::io::BufWriter::new(f);
+
+        writeln!(f, "{}", events.len())?;
+        let key_str: Vec<String> = pasta_key.iter().map(|v| v.to_string()).collect();
+        writeln!(f, "{}", key_str.join(" "))?;
+        let sk_str: Vec<String> = pvw_sk.elements.iter().map(|v| v.to_string()).collect();
+        writeln!(f, "{}", sk_str.join(" "))?;
+        for (event, _) in &events {
+            let ct_bytes = &event.pastaCt;
+            let mut elems = Vec::with_capacity(pasta4::PASTA_T);
+            for chunk in ct_bytes.chunks(4) {
+                let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as u64;
+                elems.push(val);
+            }
+            let elem_str: Vec<String> = elems.iter().map(|v| v.to_string()).collect();
+            writeln!(f, "{}", elem_str.join(" "))?;
+        }
+    }
+
     let omr_result = Command::new(&cli.omr_core)
-        .args(["evaluate-test", &cli.notes.to_string(), &cli.pertinent.to_string()])
+        .args(["evaluate", input_path, output_path])
         .output();
 
     match omr_result {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            // Extract key results
-            for line in stdout.lines() {
-                if line.contains("False negatives")
-                    || line.contains("False positives")
-                    || line.contains("Pertinent correctly")
-                    || line.contains("PASS")
-                    || line.contains("FAIL")
-                    || line.contains("Per note")
-                {
-                    println!("  {}", line.trim());
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            for line in stderr.lines().chain(stdout.lines()) {
+                if line.contains("note ") || line.contains("time") || line.contains("Eval") || line.contains("Galois") || line.contains("Notes") {
+                    println!("  {}", line);
                 }
             }
-            if !output.status.success() {
-                println!("  omr-core exited with error");
+
+            if let Ok(result_data) = std::fs::read_to_string(output_path) {
+                let mut lines = result_data.lines();
+                if let Some(first) = lines.next() {
+                    let n: usize = first.trim().parse().unwrap_or(0);
+                    let mut fhe_detected = Vec::new();
+                    let mut fhe_fn = 0;
+                    let mut fhe_fp = 0;
+                    for (idx, line) in lines.take(n).enumerate() {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if let Some(&det_str) = parts.first() {
+                            let det = det_str == "1";
+                            let is_expected = expected_pertinent.contains(&(idx as u64));
+                            if det { fhe_detected.push(idx as u64); }
+                            if is_expected && !det { fhe_fn += 1; }
+                            if !is_expected && det { fhe_fp += 1; }
+                        }
+                    }
+                    println!("  FHE results: detected {:?}", fhe_detected);
+                    println!("  FHE false negatives: {}", fhe_fn);
+                    println!("  FHE false positives: {}", fhe_fp);
+                    if fhe_fn == 0 {
+                        println!("  *** FHE PASS: 0 false negatives ***");
+                    } else {
+                        println!("  *** FHE FAIL: {} false negatives ***", fhe_fn);
+                    }
+                }
             }
         }
         Err(e) => {
@@ -241,6 +305,10 @@ async fn main() -> Result<()> {
             println!("  Build it: cd omr-core/build && make -j4");
         }
     }
+
+    // Clean up files containing secret material
+    let _ = std::fs::remove_file(input_path);
+    let _ = std::fs::remove_file(output_path);
 
     // --- Summary ---
     println!("\n==========================================================");

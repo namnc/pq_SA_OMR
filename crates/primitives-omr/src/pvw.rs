@@ -53,7 +53,7 @@ impl PvwSecretKey {
             hasher.update(&(i as u32).to_le_bytes());
             let hash = hasher.finalize();
             // Take first 8 bytes, reduce mod q
-            let val = u64::from_le_bytes(hash[..8].try_into().unwrap());
+            let val = u64::from_le_bytes(hash[..8].try_into().expect("SHA-256 output is 32 bytes"));
             elements[i] = val % PVW_Q;
         }
         Self { elements }
@@ -66,29 +66,33 @@ impl PvwSecretKey {
 }
 
 impl PvwClue {
-    /// Serialized size in bytes: n elements × 2 bytes + 1 element × 2 bytes = 52 bytes.
-    pub const SERIALIZED_SIZE: usize = (PVW_N + 1) * 2;
+    /// Serialized size in bytes: (n + 1) elements × 4 bytes = 104 bytes.
+    pub const SERIALIZED_SIZE: usize = (PVW_N + 1) * 4;
 
-    /// Serialize to bytes (little-endian u16 per element).
+    /// Serialize to bytes (little-endian u32 per element, safe for all Z_65537 values).
     pub fn serialize(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(Self::SERIALIZED_SIZE);
         for &a_i in &self.a {
-            buf.extend_from_slice(&(a_i as u16).to_le_bytes());
+            buf.extend_from_slice(&(a_i as u32).to_le_bytes());
         }
-        buf.extend_from_slice(&(self.b as u16).to_le_bytes());
+        buf.extend_from_slice(&(self.b as u32).to_le_bytes());
         buf
     }
 
-    /// Deserialize from bytes.
+    /// Deserialize from bytes. Returns None if length wrong or any element >= PVW_Q.
     pub fn deserialize(data: &[u8]) -> Option<Self> {
         if data.len() < Self::SERIALIZED_SIZE {
             return None;
         }
         let mut a = [0u64; PVW_N];
         for i in 0..PVW_N {
-            a[i] = u16::from_le_bytes([data[i * 2], data[i * 2 + 1]]) as u64;
+            let val = u32::from_le_bytes([data[i*4], data[i*4+1], data[i*4+2], data[i*4+3]]) as u64;
+            if val >= PVW_Q { return None; }
+            a[i] = val;
         }
-        let b = u16::from_le_bytes([data[PVW_N * 2], data[PVW_N * 2 + 1]]) as u64;
+        let b_off = PVW_N * 4;
+        let b = u32::from_le_bytes([data[b_off], data[b_off+1], data[b_off+2], data[b_off+3]]) as u64;
+        if b >= PVW_Q { return None; }
         Some(Self { a, b })
     }
 }
@@ -226,8 +230,9 @@ mod tests {
 
         let rate = detected as f64 / n_trials as f64;
         println!("Wrong-key detection rate: {:.2}% ({}/{})", rate * 100.0, detected, n_trials);
-        // Should be same as FP rate (~50%), not 100%
-        assert!(rate < 0.65, "wrong key detects too many: {:.2}%", rate * 100.0);
+        // With wrong key, detection should be near the FP rate (~0.39%), not near 100%.
+        // Allow up to 5% to account for statistical variance.
+        assert!(rate < 0.05, "wrong key detects too many: {:.2}% (expected ~0.39%)", rate * 100.0);
     }
 
     #[test]
@@ -264,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_clue_size() {
-        assert_eq!(PvwClue::SERIALIZED_SIZE, 52);
+        assert_eq!(PvwClue::SERIALIZED_SIZE, 104);
     }
 
     #[test]

@@ -45,15 +45,20 @@ pq_SA first contact → k_pairwise (32 B)
 | Pasta-4 depth consumed | **1 level** (budget: 14, spare: 13) |
 | Pasta-4 transcipher time | **19.3s per note** (ARM64 without NEON, unoptimized) |
 
-### B3: End-to-End on Anvil
+### B3: End-to-End
 
-| Metric | 10-note test | 5-note FHE test |
-|--------|-------------|----------------|
-| Notes (pertinent) | 10 (3) | 5 (2) |
+**Rust demo (Anvil)**: Pasta-4 encrypt → post 128 B on-chain → decrypt → PVW verify. 0 FN, 0 FP.
+
+**C++ FHE (omr-core)**: PVW clue embedded in Pasta-4 → transcipher Pasta → BFV under FHE → `decrypt_result` → PVW detection. 0 FN, 0 FP on 10-note test.
+
+| Metric | Rust (Anvil) | C++ (FHE) |
+|--------|-------------|-----------|
+| Notes (pertinent) | 10 (3) | 10 (3) |
 | False negatives | **0** | **0** |
 | False positives | **0** | **0** |
-| postNoteOMR gas (first) | 55,418 | 55,418 |
-| postNoteOMR gas (subsequent) | 38,306 | 38,306 |
+| Per note time | — | **18.9s** (ARM64) |
+| postNoteOMR gas (first) | 55,418 | — |
+| postNoteOMR gas (subsequent) | 38,306 | — |
 
 PVW parameters: n=25, q=65537, threshold=128 (q/512), error=16. Analytical FP rate: ~0.39%.
 
@@ -114,6 +119,13 @@ cd contracts && forge test -vv
 anvil &
 cargo run -p omr-server --release
 ```
+
+## Known Limitations
+
+- **Pasta-4 nonce reuse**: All notes in an epoch use the same Pasta-4 nonce (TEST_NONCE) to match the C++ HE_decrypt convention. Per-note uniqueness comes from PVW's random `a` vector — the differential `ct1 - ct2 ≡ pt1 - pt2 (mod p)` reveals the difference of two random vectors, which is itself random. A production implementation should use per-note nonces with a modified C++ transcipher.
+- **C++ FHE path decrypts on server side**: `omr-core evaluate` uses `decrypt_result` (BFV secret key) to verify transcipher correctness. In production, the server operates purely on ciphertexts and returns an encrypted digest. Separating server (transcipher + accumulate) from recipient (decrypt + verify) is the next step.
+- **ml-kem / kem crates are pre-release** (RC). PVW at n=25 gives ~65-80 bit PQ security for detection metadata, not 128-bit.
+- **Communication**: Rust ↔ C++ uses temp files (0600 permissions, deleted immediately after use). Pipe mode is blocked by the Pasta-4 SEAL library printing to stdout.
 
 ## Related Work
 

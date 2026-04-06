@@ -25,7 +25,7 @@ pub fn lwr_prf(k_pairwise: &[u8; 32], epoch: u64) -> Vec<u64> {
         let hash = hasher.finalize();
 
         // Take first 8 bytes, reduce mod p
-        let val = u64::from_le_bytes(hash[..8].try_into().unwrap());
+        let val = u64::from_le_bytes(hash[..8].try_into().expect("SHA-256 output is 32 bytes"));
         key.push(val % PASTA_P);
     }
 
