@@ -34,13 +34,13 @@ contract NoteRegistryOMR {
         bytes ciphertext
     );
 
-    /// @notice OMR note (pvwClue on calldata, ciphertext in blob/sidecar)
+    /// @notice OMR note (Pasta-4 encrypted detection signal on calldata)
     event NotePostedOMR(
         uint64 indexed noteId,
         uint256 indexed epoch,
         bytes32 commitment,
         bytes16 nonce,
-        bytes pvwClue
+        bytes pastaCt
     );
 
     event KeyRegistered(address indexed recipient, bytes pkEc, bytes ekKem);
@@ -88,24 +88,25 @@ contract NoteRegistryOMR {
     //  Note posting — OMR (pvwClue on calldata, ciphertext in blob/sidecar)
     // =========================================================================
 
-    /// @notice Post a note with a PVW detection clue for OMR.
-    ///         The encrypted note (632 B) and Pasta-4 signal (68 B) go to
-    ///         blob/sidecar off-chain. Only the detection data is on calldata.
+    /// @notice Post a note with a Pasta-4 encrypted detection signal for OMR.
+    ///         The Pasta-4 ciphertext (64 B) contains the PVW clue encrypted
+    ///         under a symmetric key derived from k_pairwise. The FHE server
+    ///         transciphers Pasta-4 → BFV to evaluate detection homomorphically.
     /// @param commitment Note commitment hash (32 bytes)
-    /// @param nonce 16-byte AEAD nonce
-    /// @param pvwClue PVW detection clue (52 bytes)
+    /// @param nonce 16-byte nonce
+    /// @param pastaCt Pasta-4 ciphertext of PVW detection signal (64 bytes)
     function postNoteOMR(
         bytes32 commitment,
         bytes16 nonce,
-        bytes calldata pvwClue
+        bytes calldata pastaCt
     ) external payable {
         require(commitment != bytes32(0), "zero commitment");
-        require(pvwClue.length == 52, "pvwClue must be 52 bytes");
+        require(pastaCt.length == 64, "pastaCt must be 64 bytes");
         require(msg.value >= minSenderFee, "below min sender fee");
         _advanceEpoch();
         uint64 noteId = nextNoteId++;
         noteCommitments[noteId] = commitment;
-        emit NotePostedOMR(noteId, currentEpoch, commitment, nonce, pvwClue);
+        emit NotePostedOMR(noteId, currentEpoch, commitment, nonce, pastaCt);
         _handleFee(noteId, commitment);
     }
 
