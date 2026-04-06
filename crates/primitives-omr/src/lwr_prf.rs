@@ -1,10 +1,7 @@
-//! LWR (Learning with Rounding) PRF for deriving Pasta-4 keys.
+//! PRF for deriving Pasta-4 keys from (k_pairwise, epoch).
 //!
-//! Derives a 64-element Pasta-4 key from (k_pairwise, epoch) deterministically.
-//! Under BFV FHE, this costs depth 1 (one matrix-vector multiply).
-//!
-//! The PRF uses SHAKE128 to expand the pairwise key into a public matrix A,
-//! then computes output = round(A * input mod q) to F_p elements.
+//! Derives a 64-element Pasta-4 key deterministically using domain-separated SHA-256.
+//! Each element is derived independently: SHA-256("pq-sa-lwr-prf-v1" || k || epoch || i) mod p.
 
 use sha2::{Sha256, Digest};
 use crate::pasta4::{PASTA_P, KEY_SIZE};

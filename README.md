@@ -122,10 +122,10 @@ cargo run -p omr-server --release
 
 ## Known Limitations
 
-- **Pasta-4 nonce reuse**: All notes in an epoch use the same Pasta-4 nonce (TEST_NONCE) to match the C++ HE_decrypt convention. Per-note uniqueness comes from PVW's random `a` vector — the differential `ct1 - ct2 ≡ pt1 - pt2 (mod p)` reveals the difference of two random vectors, which is itself random. A production implementation should use per-note nonces with a modified C++ transcipher.
-- **C++ FHE path decrypts on server side**: `omr-core evaluate` uses `decrypt_result` (BFV secret key) to verify transcipher correctness. In production, the server operates purely on ciphertexts and returns an encrypted digest. Separating server (transcipher + accumulate) from recipient (decrypt + verify) is the next step.
+- **Per-note masking**: Pasta-4 nonce is fixed (TEST_NONCE, matching C++ HE_decrypt convention). Per-note semantic security is provided by an additive mask over F_p derived from the on-chain nonce: `masked_pt = (pt + mask(nonce)) mod p`. The mask makes `ct1 - ct2` reveal the difference of independently masked values, not raw plaintexts.
+- **C++ FHE path decrypts on server side**: `omr-core evaluate` uses `decrypt_result` (BFV secret key) to verify transcipher correctness. In production, the server operates purely on ciphertexts and returns an encrypted digest.
 - **ml-kem / kem crates are pre-release** (RC). PVW at n=25 gives ~65-80 bit PQ security for detection metadata, not 128-bit.
-- **Communication**: Rust ↔ C++ uses temp files (0600 permissions, deleted immediately after use). Pipe mode is blocked by the Pasta-4 SEAL library printing to stdout.
+- **Temp files**: unique per run (timestamp-based), 0600 permissions, deleted immediately after use. Stale files from prior runs deleted before launch.
 
 ## Related Work
 

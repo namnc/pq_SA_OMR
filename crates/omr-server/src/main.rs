@@ -108,26 +108,27 @@ async fn main() -> Result<()> {
     for i in 0..cli.notes {
         let is_pertinent = i < cli.pertinent;
 
-        // Generate per-note nonce for on-chain identifier
+        // Generate per-note nonce
         let mut nonce = [0u8; 16];
         rng.fill_bytes(&mut nonce);
-        // Use cross-validated TEST_NONCE for Pasta-4 (matches C++ HE_decrypt convention).
-        // Per-note uniqueness from PVW's random a-vector, not the Pasta nonce.
-        let pasta_nonce = pasta4::TEST_NONCE;
 
         // Generate PVW clue (26 elements of Z_65537)
         let clue = pvw::generate_clue(&pvw_sk, is_pertinent, &mut rng);
 
-        // Encrypt PVW clue under Pasta-4: pad 26 elements → 32, encrypt with per-note nonce
+        // Build plaintext: [a0..a24, b, 0..0] padded to 32 elements
         let mut plaintext = Vec::with_capacity(pasta4::PASTA_T);
-        for &a_i in &clue.a {
-            plaintext.push(a_i);
-        }
+        for &a_i in &clue.a { plaintext.push(a_i); }
         plaintext.push(clue.b);
-        while plaintext.len() < pasta4::PASTA_T {
-            plaintext.push(0);
-        }
-        let ct_elements = pasta.encrypt(&plaintext, pasta_nonce);
+        while plaintext.len() < pasta4::PASTA_T { plaintext.push(0); }
+
+        // Apply per-note mask: masked_pt = (pt + mask(nonce)) mod p
+        // This prevents keystream-reuse attacks without changing the Pasta key/nonce.
+        let mask = primitives_omr::derive_mask(&nonce);
+        let masked: Vec<u64> = plaintext.iter().zip(mask.iter())
+            .map(|(&p, &m)| (p + m) % pasta4::PASTA_P)
+            .collect();
+
+        let ct_elements = pasta.encrypt(&masked, pasta4::TEST_NONCE);
         // Serialize as u32 (safe for all Z_65537 values including 65536)
         let mut pasta_ct_bytes = Vec::with_capacity(128);
         for &el in &ct_elements {
@@ -180,9 +181,13 @@ async fn main() -> Result<()> {
     for (_i, (event, _)) in events.iter().enumerate() {
         // Deserialize Pasta-4 ciphertext (128 B → 32 u64 elements), validate range
         let ct_bytes = &event.pastaCt;
+        if ct_bytes.len() != pasta4::PASTA_T * 4 {
+            println!("  note {}: wrong ciphertext length {}, skipping", event.noteId, ct_bytes.len());
+            continue;
+        }
         let mut ct_elements = Vec::with_capacity(pasta4::PASTA_T);
         let mut valid = true;
-        for chunk in ct_bytes.chunks(4) {
+        for chunk in ct_bytes.chunks_exact(4) {
             let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as u64;
             if val >= pasta4::PASTA_P {
                 valid = false;
@@ -191,15 +196,19 @@ async fn main() -> Result<()> {
             ct_elements.push(val);
         }
         if !valid {
-            println!("  note {}: malformed Pasta ciphertext (element >= {}), skipping", event.noteId, pasta4::PASTA_P);
+            println!("  note {}: malformed element >= {}, skipping", event.noteId, pasta4::PASTA_P);
             continue;
         }
 
-        // Use same Pasta nonce as sender (cross-validated with C++)
-        let pasta_nonce = pasta4::TEST_NONCE;
+        // Decrypt Pasta-4 → masked plaintext
+        let masked_pt = pasta.decrypt(&ct_elements, pasta4::TEST_NONCE);
 
-        // Decrypt Pasta-4 → recover PVW clue
-        let plaintext = pasta.decrypt(&ct_elements, pasta_nonce);
+        // Remove per-note mask → recover original plaintext
+        let nonce_bytes: [u8; 16] = event.nonce.0;
+        let mask = primitives_omr::derive_mask(&nonce_bytes);
+        let plaintext: Vec<u64> = masked_pt.iter().zip(mask.iter())
+            .map(|(&m, &mask_i)| (m + pasta4::PASTA_P - mask_i) % pasta4::PASTA_P)
+            .collect();
         let mut a = [0u64; pvw::PVW_N];
         a.copy_from_slice(&plaintext[..pvw::PVW_N]);
         let b = plaintext[pvw::PVW_N];
@@ -230,10 +239,16 @@ async fn main() -> Result<()> {
     println!("\n--- Invoking omr-core evaluate (FHE on real data) ---");
 
     use std::io::Write;
-    let input_path = "/tmp/omr_input.txt";
-    let output_path = "/tmp/omr_output.txt";
+    // Unique temp file names to avoid stale-output reuse
+    let run_id: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
+    let input_path = format!("/tmp/omr_input_{}.txt", run_id);
+    let output_path = format!("/tmp/omr_output_{}.txt", run_id);
+    // Delete any stale files from prior crashes
+    let _ = std::fs::remove_file(&input_path);
+    let _ = std::fs::remove_file(&output_path);
     {
-        let f = std::fs::File::create(input_path)?;
+        let f = std::fs::File::create(&input_path)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -246,10 +261,17 @@ async fn main() -> Result<()> {
         writeln!(f, "{}", key_str.join(" "))?;
         let sk_str: Vec<String> = pvw_sk.elements.iter().map(|v| v.to_string()).collect();
         writeln!(f, "{}", sk_str.join(" "))?;
+        // Per note: mask (32 values) + ciphertext (32 values)
         for (event, _) in &events {
+            // Compute mask from on-chain nonce
+            let nonce_bytes: [u8; 16] = event.nonce.0;
+            let mask = primitives_omr::derive_mask(&nonce_bytes);
+            let mask_str: Vec<String> = mask.iter().map(|v| v.to_string()).collect();
+            writeln!(f, "{}", mask_str.join(" "))?;
+
             let ct_bytes = &event.pastaCt;
             let mut elems = Vec::with_capacity(pasta4::PASTA_T);
-            for chunk in ct_bytes.chunks(4) {
+            for chunk in ct_bytes.chunks_exact(4) {
                 let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as u64;
                 elems.push(val);
             }
@@ -259,7 +281,7 @@ async fn main() -> Result<()> {
     }
 
     let omr_result = Command::new(&cli.omr_core)
-        .args(["evaluate", input_path, output_path])
+        .args(["evaluate", &input_path, &output_path])
         .output();
 
     match omr_result {
@@ -272,7 +294,11 @@ async fn main() -> Result<()> {
                 }
             }
 
-            if let Ok(result_data) = std::fs::read_to_string(output_path) {
+            if !output.status.success() {
+                println!("  omr-core exited with error (status {})", output.status);
+            }
+
+            if let Ok(result_data) = std::fs::read_to_string(&output_path) {
                 let mut lines = result_data.lines();
                 if let Some(first) = lines.next() {
                     let n: usize = first.trim().parse().unwrap_or(0);
@@ -307,8 +333,8 @@ async fn main() -> Result<()> {
     }
 
     // Clean up files containing secret material
-    let _ = std::fs::remove_file(input_path);
-    let _ = std::fs::remove_file(output_path);
+    let _ = std::fs::remove_file(&input_path);
+    let _ = std::fs::remove_file(&output_path);
 
     // --- Summary ---
     println!("\n==========================================================");
