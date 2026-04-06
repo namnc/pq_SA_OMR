@@ -7,7 +7,6 @@
 //! test notes, invokes omr-core, and verifies correctness.
 
 use alloy::{
-    primitives::Address,
     providers::{Provider, ProviderBuilder},
     signers::local::PrivateKeySigner,
     network::EthereumWallet,
@@ -83,7 +82,7 @@ async fn main() -> Result<()> {
 
     // --- Deploy contract ---
     println!("--- Deploying NoteRegistryOMR ---");
-    let contract = NoteRegistryOMR::deploy(&sender_provider, Address::ZERO).await?;
+    let contract = NoteRegistryOMR::deploy(&sender_provider).await?;
     println!("  Deployed at: {}\n", contract.address());
 
     let start_block = sender_provider.get_block_number().await?;
@@ -105,29 +104,29 @@ async fn main() -> Result<()> {
     for i in 0..cli.notes {
         let is_pertinent = i < cli.pertinent;
 
+        // Generate per-note nonce (used for both Pasta-4 and on-chain)
+        let mut nonce = [0u8; 16];
+        rng.fill_bytes(&mut nonce);
+        let pasta_nonce = u64::from_le_bytes(nonce[..8].try_into().unwrap());
+
         // Generate PVW clue (26 elements of Z_65537)
         let clue = pvw::generate_clue(&pvw_sk, is_pertinent, &mut rng);
 
-        // Encrypt PVW clue under Pasta-4: pad 26 elements → 32, encrypt → 64 B
+        // Encrypt PVW clue under Pasta-4: pad 26 elements → 32, encrypt with per-note nonce
         let mut plaintext = Vec::with_capacity(pasta4::PASTA_T);
         for &a_i in &clue.a {
             plaintext.push(a_i);
         }
         plaintext.push(clue.b);
-        // Pad to 32 elements
         while plaintext.len() < pasta4::PASTA_T {
             plaintext.push(0);
         }
-        let ct_elements = pasta.encrypt(&plaintext);
-        // Serialize as u16 (each element fits in Z_65537)
-        let mut pasta_ct_bytes = Vec::with_capacity(64);
+        let ct_elements = pasta.encrypt(&plaintext, pasta_nonce);
+        // Serialize as u32 (safe for all Z_65537 values including 65536)
+        let mut pasta_ct_bytes = Vec::with_capacity(128);
         for &el in &ct_elements {
-            pasta_ct_bytes.extend_from_slice(&(el as u16).to_le_bytes());
+            pasta_ct_bytes.extend_from_slice(&(el as u32).to_le_bytes());
         }
-
-        // Generate nonce
-        let mut nonce = [0u8; 16];
-        rng.fill_bytes(&mut nonce);
 
         // Post on-chain: commitment + nonce + Pasta-4 ciphertext (64 B)
         let commitment = {
@@ -172,17 +171,21 @@ async fn main() -> Result<()> {
     let mut false_neg = 0;
     let mut false_pos = 0;
 
-    for (i, (event, _)) in events.iter().enumerate() {
-        // Deserialize Pasta-4 ciphertext (64 B → 32 u64 elements)
+    for (_i, (event, _)) in events.iter().enumerate() {
+        // Deserialize Pasta-4 ciphertext (128 B → 32 u64 elements)
         let ct_bytes = &event.pastaCt;
         let mut ct_elements = Vec::with_capacity(pasta4::PASTA_T);
-        for chunk in ct_bytes.chunks(2) {
-            let val = u16::from_le_bytes([chunk[0], chunk[1]]) as u64;
+        for chunk in ct_bytes.chunks(4) {
+            let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as u64;
             ct_elements.push(val);
         }
 
+        // Derive per-note Pasta nonce from the on-chain nonce
+        let nonce_bytes: [u8; 16] = event.nonce.0;
+        let pasta_nonce = u64::from_le_bytes(nonce_bytes[..8].try_into().unwrap());
+
         // Decrypt Pasta-4 → recover PVW clue
-        let plaintext = pasta.decrypt(&ct_elements);
+        let plaintext = pasta.decrypt(&ct_elements, pasta_nonce);
         let mut a = [0u64; pvw::PVW_N];
         a.copy_from_slice(&plaintext[..pvw::PVW_N]);
         let b = plaintext[pvw::PVW_N];

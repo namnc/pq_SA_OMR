@@ -6,19 +6,19 @@ Standard OMR tables contain Regev ciphertexts (~1-2 KB per entry) for detection 
 
 The same substitution applies beyond stealth addresses — any system where a server must match encrypted entries to recipients without seeing the plaintext. Examples: on-chain note discovery, encrypted messaging, and private notification services.
 
-**Status**: B0-B3 complete. 0 FN, 0 FP on Anvil. 23 Rust + 10 Foundry = 33 tests.
+**Status**: B0-B3 complete. 0 FN, 0 FP on Anvil. 23 Rust + 7 Foundry = 30 tests.
 
 ## The Substitution
 
 | | Standard OMR | This work |
 |--|-------------|-----------|
-| Detection entry | Regev ciphertext (~1-2 KB) | **Pasta-4 ciphertext (~64 B)** |
+| Detection entry | Regev ciphertext (~1-2 KB) | **Pasta-4 ciphertext (~128 B)** |
 | On-chain viable? | No (too expensive) | **Yes** |
 | Server evaluation | Direct (Regev is already lattice-compatible with BFV) | Transcipher Pasta → BFV, then evaluate |
 | Shared key required? | No (Regev uses recipient's public key) | Yes (`k_pairwise` from stealth address first contact) |
 
 The two numbers that define the tradeoff:
-1. **Ciphertext size**: Regev ~1-2 KB vs Pasta ~64 B → **~20-30x calldata reduction**
+1. **Ciphertext size**: Regev ~1-2 KB vs Pasta ~64 B → **~10-15x calldata reduction**
 2. **Transcipher overhead**: 19.3s/note measured (ARM64, unoptimized) — the cost of the size savings
 
 ## Why k_pairwise
@@ -30,7 +30,7 @@ The stealth address pairwise key provides this for free. `k_pairwise` is already
 ```
 pq_SA first contact → k_pairwise (32 B)
                         └─ LWR PRF(k_pairwise, epoch) → Pasta-4 key
-                            └─ Pasta4.Encrypt(key, detection_signal) → ~64 B
+                            └─ Pasta4.Encrypt(key, detection_signal) → ~128 B
                                 └─ FHE server transciphers into BFV → evaluates detection
 ```
 
@@ -52,8 +52,8 @@ pq_SA first contact → k_pairwise (32 B)
 | Notes (pertinent) | 10 (3) | 5 (2) |
 | False negatives | **0** | **0** |
 | False positives | **0** | **0** |
-| postNoteOMR gas (first) | 79,066 | 79,066 |
-| postNoteOMR gas (subsequent) | 61,954 | 61,954 |
+| postNoteOMR gas (first) | 55,418 | 55,418 |
+| postNoteOMR gas (subsequent) | 38,306 | 38,306 |
 
 PVW parameters: n=25, q=65537, threshold=128 (q/512), error=16. Analytical FP rate: ~0.39%.
 
@@ -89,7 +89,7 @@ pq_SA_OMR/
 │       ├── main.cpp                  CLI: evaluate-test | keygen | decrypt
 │       └── pvw_he.cpp                PVW detection under BFV
 ├── contracts/
-│   ├── src/NoteRegistryOMR.sol       postNoteOMR with 52B pvwClue (10 tests)
+│   ├── src/NoteRegistryOMR.sol       postNoteOMR with 128B Pasta-4 ct (7 tests)
 │   └── test/NoteRegistryOMR.t.sol
 └── crates/
     ├── primitives-omr/               Plaintext Rust primitives (19 unit + 4 e2e)

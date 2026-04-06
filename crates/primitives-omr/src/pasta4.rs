@@ -25,6 +25,9 @@ pub const PASTA_R: usize = 4;
 /// Key size (two half-states)
 pub const KEY_SIZE: usize = PASTA_T * 2; // 64
 
+/// Fixed nonce used by C++ reference test vectors.
+pub const TEST_NONCE: u64 = 123456789;
+
 type Block = [u64; PASTA_T];
 
 /// Pasta-4 cipher instance.
@@ -116,10 +119,9 @@ impl Pasta {
         state1
     }
 
-    /// Encrypt plaintext (additive stream cipher).
-    pub fn encrypt(&self, plaintext: &[u64]) -> Vec<u64> {
-        let nonce: u64 = 123456789; // Fixed nonce (matches C++ reference)
-        let block_size = PASTA_T; // 32 elements per block
+    /// Encrypt plaintext with per-note nonce (additive stream cipher).
+    pub fn encrypt(&self, plaintext: &[u64], nonce: u64) -> Vec<u64> {
+        let block_size = PASTA_T;
         let mut ciphertext = Vec::with_capacity(plaintext.len());
 
         for (b, chunk) in plaintext.chunks(block_size).enumerate() {
@@ -131,9 +133,8 @@ impl Pasta {
         ciphertext
     }
 
-    /// Decrypt ciphertext (subtractive stream cipher).
-    pub fn decrypt(&self, ciphertext: &[u64]) -> Vec<u64> {
-        let nonce: u64 = 123456789;
+    /// Decrypt ciphertext with per-note nonce (subtractive stream cipher).
+    pub fn decrypt(&self, ciphertext: &[u64], nonce: u64) -> Vec<u64> {
         let block_size = PASTA_T;
         let mut plaintext = Vec::with_capacity(ciphertext.len());
 
@@ -268,7 +269,7 @@ mod tests {
         let pasta = Pasta::new(tv.key.clone(), tv.modulus);
 
         for (i, v) in tv.vectors.iter().enumerate() {
-            let ct = pasta.encrypt(&v.plaintext);
+            let ct = pasta.encrypt(&v.plaintext, TEST_NONCE);
             assert_eq!(ct, v.ciphertext,
                 "encrypt mismatch at vector {}: expected {:?}, got {:?}",
                 i, &v.ciphertext[..4], &ct[..4]);
@@ -281,7 +282,7 @@ mod tests {
         let pasta = Pasta::new(tv.key.clone(), tv.modulus);
 
         for (i, v) in tv.vectors.iter().enumerate() {
-            let pt = pasta.decrypt(&v.ciphertext);
+            let pt = pasta.decrypt(&v.ciphertext, TEST_NONCE);
             assert_eq!(pt, v.plaintext,
                 "decrypt mismatch at vector {}", i);
         }
@@ -293,8 +294,8 @@ mod tests {
         let pasta = Pasta::new(tv.key.clone(), tv.modulus);
 
         for (i, v) in tv.vectors.iter().enumerate() {
-            let ct = pasta.encrypt(&v.plaintext);
-            let pt = pasta.decrypt(&ct);
+            let ct = pasta.encrypt(&v.plaintext, TEST_NONCE);
+            let pt = pasta.decrypt(&ct, TEST_NONCE);
             assert_eq!(pt, v.plaintext, "roundtrip failed at vector {}", i);
         }
     }
