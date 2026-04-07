@@ -97,6 +97,14 @@ The missing comparison: **Pasta transcipher vs direct Regev evaluation** at the 
 - `omr-core/src/` — C++ FHE evaluation binary (SEAL 4.1.2)
 - `contracts/src/NoteRegistryOMR.sol` — postNoteOMR with 52B pvwClue
 
+## Applicability Beyond Stealth Addresses
+
+The Regev → Pasta substitution applies to any system with encrypted note discovery:
+
+- **Aztec**: [note discovery](https://docs.aztec.network/developers/docs/foundational-topics/advanced/storage/note_discovery) calls OMR "currently impractical." The 128 B Pasta entries address their cost concern. Their shared secret (Grumpkin ECDH) maps to our k_pairwise; their Poseidon2 tags map to our PVW clues.
+- **Encrypted messaging**: any system where a server matches encrypted entries to recipients without seeing plaintext.
+- **Private notifications**: push notification services that don't learn which notifications are for which user.
+
 ## Related Work
 
 **OMR:**

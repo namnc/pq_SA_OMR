@@ -91,12 +91,10 @@ async fn main() -> Result<()> {
     let mut rng = ChaChaRng::seed_from_u64(42);
     let k_pairwise = [77u8; 32];
 
-    // Read current epoch from contract (not hardcoded)
-    let epoch_val = contract.currentEpoch().call().await?;
-    let epoch: u64 = epoch_val.to::<u64>();
-    println!("[setup] Current epoch: {}\n", epoch);
-
-    let pasta_key = lwr_prf::lwr_prf(&k_pairwise, epoch);
+    // Derive Pasta key from k_pairwise only (no epoch — avoids race condition
+    // where sender reads stale epoch and contract advances before inclusion).
+    // Epoch is still emitted in events for filtering, but does not affect encryption.
+    let pasta_key = lwr_prf::lwr_prf(&k_pairwise, 0);
     let pasta = pasta4::Pasta::new(pasta_key.clone(), pasta4::PASTA_P);
     let pvw_sk = pvw::PvwSecretKey::from_pairwise_key(&k_pairwise);
 
@@ -115,20 +113,20 @@ async fn main() -> Result<()> {
         // Generate PVW clue (26 elements of Z_65537)
         let clue = pvw::generate_clue(&pvw_sk, is_pertinent, &mut rng);
 
-        // Build plaintext: [a0..a24, b, 0..0] padded to 32 elements
+        // Build plaintext: [a0..a24, b, random..random] — fill padding with random values
+        // to avoid leaking keystream coordinates through known-zero slots.
         let mut plaintext = Vec::with_capacity(pasta4::PASTA_T);
         for &a_i in &clue.a { plaintext.push(a_i); }
         plaintext.push(clue.b);
-        while plaintext.len() < pasta4::PASTA_T { plaintext.push(0); }
+        while plaintext.len() < pasta4::PASTA_T {
+            plaintext.push(rng.next_u64() % pasta4::PASTA_P);
+        }
 
-        // Apply per-note mask: masked_pt = (pt + mask(nonce)) mod p
-        // This prevents keystream-reuse attacks without changing the Pasta key/nonce.
-        let mask = primitives_omr::derive_mask(&nonce);
-        let masked: Vec<u64> = plaintext.iter().zip(mask.iter())
-            .map(|(&p, &m)| (p + m) % pasta4::PASTA_P)
-            .collect();
-
-        let ct_elements = pasta.encrypt(&masked, pasta4::TEST_NONCE);
+        // Encrypt with Pasta-4. Note: TEST_NONCE is reused across notes (C++ framework
+        // limitation). An observer can compute ct1 - ct2 = pt1 - pt2 mod p. Since PVW
+        // a-vectors are random per note, this difference is random — but it is NOT
+        // semantically secure. Production requires per-note nonces (C++ framework change).
+        let ct_elements = pasta.encrypt(&plaintext, pasta4::TEST_NONCE);
         // Serialize as u32 (safe for all Z_65537 values including 65536)
         let mut pasta_ct_bytes = Vec::with_capacity(128);
         for &el in &ct_elements {
@@ -200,15 +198,8 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        // Decrypt Pasta-4 → masked plaintext
-        let masked_pt = pasta.decrypt(&ct_elements, pasta4::TEST_NONCE);
-
-        // Remove per-note mask → recover original plaintext
-        let nonce_bytes: [u8; 16] = event.nonce.0;
-        let mask = primitives_omr::derive_mask(&nonce_bytes);
-        let plaintext: Vec<u64> = masked_pt.iter().zip(mask.iter())
-            .map(|(&m, &mask_i)| (m + pasta4::PASTA_P - mask_i) % pasta4::PASTA_P)
-            .collect();
+        // Decrypt Pasta-4 → recover plaintext
+        let plaintext = pasta.decrypt(&ct_elements, pasta4::TEST_NONCE);
         let mut a = [0u64; pvw::PVW_N];
         a.copy_from_slice(&plaintext[..pvw::PVW_N]);
         let b = plaintext[pvw::PVW_N];
@@ -256,19 +247,25 @@ async fn main() -> Result<()> {
         }
         let mut f = std::io::BufWriter::new(f);
 
-        writeln!(f, "{}", events.len())?;
+        // Pre-validate events for C++ — skip malformed notes to avoid DoS on FHE batch
+        let mut valid_events: Vec<&_> = Vec::new();
+        for (event, _) in &events {
+            let ct = &event.pastaCt;
+            if ct.len() != pasta4::PASTA_T * 4 { continue; }
+            let mut ok = true;
+            for chunk in ct.chunks_exact(4) {
+                let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as u64;
+                if val >= pasta4::PASTA_P { ok = false; break; }
+            }
+            if ok { valid_events.push(event); }
+        }
+
+        writeln!(f, "{}", valid_events.len())?;
         let key_str: Vec<String> = pasta_key.iter().map(|v| v.to_string()).collect();
         writeln!(f, "{}", key_str.join(" "))?;
         let sk_str: Vec<String> = pvw_sk.elements.iter().map(|v| v.to_string()).collect();
         writeln!(f, "{}", sk_str.join(" "))?;
-        // Per note: mask (32 values) + ciphertext (32 values)
-        for (event, _) in &events {
-            // Compute mask from on-chain nonce
-            let nonce_bytes: [u8; 16] = event.nonce.0;
-            let mask = primitives_omr::derive_mask(&nonce_bytes);
-            let mask_str: Vec<String> = mask.iter().map(|v| v.to_string()).collect();
-            writeln!(f, "{}", mask_str.join(" "))?;
-
+        for event in &valid_events {
             let ct_bytes = &event.pastaCt;
             let mut elems = Vec::with_capacity(pasta4::PASTA_T);
             for chunk in ct_bytes.chunks_exact(4) {
@@ -277,6 +274,9 @@ async fn main() -> Result<()> {
             }
             let elem_str: Vec<String> = elems.iter().map(|v| v.to_string()).collect();
             writeln!(f, "{}", elem_str.join(" "))?;
+        }
+        if valid_events.len() < events.len() {
+            println!("  Skipped {} malformed notes for FHE path", events.len() - valid_events.len());
         }
     }
 

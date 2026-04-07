@@ -26,7 +26,7 @@ contract NoteRegistryOMR {
 
     /// @notice Post a note with a Pasta-4 encrypted detection signal.
     /// @param commitment Note commitment hash (32 bytes)
-    /// @param nonce Per-note nonce (16 bytes, first 8 bytes also used as Pasta-4 nonce)
+    /// @param nonce Per-note identifier (16 bytes)
     /// @param pastaCt Pasta-4 ciphertext of PVW detection signal (128 bytes = 32 elements × 4 bytes)
     function postNoteOMR(
         bytes32 commitment,

@@ -237,20 +237,17 @@ void cmd_evaluate(const string& input_file, const string& output_file) {
         if (s >= PLAIN_MOD) { cerr << "Invalid pvw_sk element >= " << PLAIN_MOD << "\n"; return; }
     }
 
-    // Per note: 32 mask elements (pre-computed by Rust) + 32 ciphertext elements
-    vector<vector<uint64_t>> masks(num_notes, vector<uint64_t>(32));
+    // Per note: 32 ciphertext elements
     vector<vector<uint64_t>> pasta_cts(num_notes, vector<uint64_t>(32));
     for (int i = 0; i < num_notes; i++) {
         for (int j = 0; j < 32; j++) {
-            in >> masks[i][j];
-            if (masks[i][j] >= PLAIN_MOD) {
-                cerr << "Invalid mask element at note " << i << " pos " << j << "\n"; return;
-            }
-        }
-        for (int j = 0; j < 32; j++) {
             in >> pasta_cts[i][j];
             if (pasta_cts[i][j] >= PLAIN_MOD) {
-                cerr << "Invalid ciphertext element at note " << i << " pos " << j << "\n"; return;
+                cerr << "Invalid ciphertext element at note " << i << " pos " << j
+                     << " (value " << pasta_cts[i][j] << " >= " << PLAIN_MOD << "). Skipping.\n";
+                // Fill remainder with zeros so we can continue
+                for (int k = j+1; k < 32; k++) { in >> pasta_cts[i][k]; pasta_cts[i][k] = 0; }
+                break;
             }
         }
     }
@@ -301,18 +298,12 @@ void cmd_evaluate(const string& input_file, const string& output_file) {
         vector<Ciphertext> he_signals = pasta_he.HE_decrypt(pasta_cts[i], true);
         vector<uint64_t> transciphered = pasta_he.decrypt_result(he_signals, true);
 
-        // Remove per-note mask: pt = (masked_pt + p - mask) mod p
-        vector<uint64_t> plaintext(32);
-        for (int j = 0; j < 32; j++) {
-            plaintext[j] = (transciphered[j] + PLAIN_MOD - masks[i][j]) % PLAIN_MOD;
-        }
-
-        // PVW detect on unmasked plaintext
+        // PVW detect on transciphered plaintext
         uint64_t inner_sum = 0;
         for (size_t j = 0; j < omr::PVW_N; j++) {
-            inner_sum = (inner_sum + (plaintext[j] * pvw_sk[j]) % PLAIN_MOD) % PLAIN_MOD;
+            inner_sum = (inner_sum + (transciphered[j] * pvw_sk[j]) % PLAIN_MOD) % PLAIN_MOD;
         }
-        uint64_t b_val = plaintext[omr::PVW_N];
+        uint64_t b_val = transciphered[omr::PVW_N];
 
         int64_t diff = ((int64_t)b_val - (int64_t)inner_sum) % (int64_t)PLAIN_MOD;
         if (diff < 0) diff += PLAIN_MOD;

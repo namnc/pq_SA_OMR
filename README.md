@@ -122,10 +122,14 @@ cargo run -p omr-server --release
 
 ## Known Limitations
 
-- **Per-note masking**: Pasta-4 nonce is fixed (TEST_NONCE, matching C++ HE_decrypt convention). Per-note semantic security is provided by an additive mask over F_p derived from the on-chain nonce: `masked_pt = (pt + mask(nonce)) mod p`. The mask makes `ct1 - ct2` reveal the difference of independently masked values, not raw plaintexts.
+- **Pasta-4 nonce reuse**: All notes use TEST_NONCE (C++ HE_decrypt convention). An observer can compute `ct1 - ct2 = pt1 - pt2 mod p`. Since PVW `a` vectors are random per note, the difference is random in positions 0-24 — but this is NOT semantically secure. Padding slots are filled with random values to avoid leaking keystream. Production requires per-note nonces (C++ framework modification).
 - **C++ FHE path decrypts on server side**: `omr-core evaluate` uses `decrypt_result` (BFV secret key) to verify transcipher correctness. In production, the server operates purely on ciphertexts and returns an encrypted digest.
 - **ml-kem / kem crates are pre-release** (RC). PVW at n=25 gives ~65-80 bit PQ security for detection metadata, not 128-bit.
 - **Temp files**: unique per run (timestamp-based), 0600 permissions, deleted immediately after use. Stale files from prior runs deleted before launch.
+
+## Applicability to Aztec Note Discovery
+
+Aztec's [note discovery](https://docs.aztec.network/developers/docs/foundational-topics/advanced/storage/note_discovery) explicitly calls OMR a "long-term goal" that's "currently impractical due to computational costs." The Regev → Pasta substitution directly addresses this: 128 B on-chain entries instead of ~2 KB, with the pairwise key from stealth address first contact enabling the symmetric Pasta cipher. The curve (Grumpkin vs secp256k1) and hash (Poseidon2 vs SHA-256) are parameter choices — the OMR architecture is the same.
 
 ## Related Work
 
