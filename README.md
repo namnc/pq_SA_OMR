@@ -145,6 +145,7 @@ Aztec's [note discovery](https://docs.aztec.network/developers/docs/foundational
 
 **PQ stealth addresses:**
 - [pq_SA](https://github.com/namnc/pq_SA) — PQ key exchange for stealth addresses (provides k_pairwise)
+- [Platus](https://docs.platus.xyz/architecture/quantum-security) — Hybrid KEM (Baby Jubjub + ML-KEM-1024) for encrypted notes. No pairwise channels or OMR — the Regev → Pasta substitution applies.
 
 ## Acknowledgements
 
