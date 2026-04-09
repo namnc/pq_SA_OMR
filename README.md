@@ -149,6 +149,7 @@ Aztec's [note discovery](https://docs.aztec.network/developers/docs/foundational
 
 ## Acknowledgements
 
+- Hy Ngo — Review and audit
 - Keewoo Lee — Discussion on OMR architecture and SophOMR
 - IAIK TU Graz — hybrid-HE-framework (Pasta-4 reference implementation)
 - Vikas — Sepolia ETH for testnet deployment

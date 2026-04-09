@@ -97,6 +97,20 @@ The missing comparison: **Pasta transcipher vs direct Regev evaluation** at the 
 - `omr-core/src/` — C++ FHE evaluation binary (SEAL 4.1.2)
 - `contracts/src/NoteRegistryOMR.sol` — postNoteOMR with 52B pvwClue
 
+## Privacy Protocol Scanning Landscape
+
+Every major private transfer protocol relies on local trial decryption — scanning every note to find yours:
+
+| Protocol | Discovery | Delegated? | PQ? |
+|----------|-----------|------------|-----|
+| Zcash | Trial decrypt all outputs | No | No |
+| Penumbra | S-FMD (coarse) + trial decrypt (fine) | Partially | No |
+| Railgun | Trial decrypt (WASM) | No | No |
+| Umbra | ECDH + view tags | Semi (subgraph) | No |
+| Panther, Manta, Labyrinth | Trial decrypt | No | No |
+
+Penumbra's S-FMD is the only deployed delegation, but it leaks probabilistic detection. True OMR (fully oblivious) is not deployed anywhere. The Regev → Pasta substitution makes OMR practical for any protocol in this table.
+
 ## Applicability Beyond Stealth Addresses
 
 The Regev → Pasta substitution applies to any system with encrypted note discovery:
@@ -122,6 +136,7 @@ The Regev → Pasta substitution applies to any system with encrypted note disco
 
 ## Acknowledgements
 
+- Hy Ngo — Review and audit
 - Keewoo Lee — Discussion on OMR architecture and SophOMR
 - IAIK TU Graz — hybrid-HE-framework (Pasta-4 reference implementation)
 - Vikas — Sepolia ETH for testnet deployment
