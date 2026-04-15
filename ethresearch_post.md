@@ -1,6 +1,6 @@
 # Replacing Regev with Pasta in the OMR Table
 
-Standard OMR ([Liu & Tromer 2021](https://eprint.iacr.org/2021/1256)) tables use Regev ciphertexts for detection — each entry is ~1-2 KB of lattice ciphertext, too large for on-chain calldata. We replace Regev with Pasta-4 symmetric encryption (~64 B per entry), enabled by the stealth address pairwise key `k_pairwise` from [pq_SA](https://github.com/namnc/pq_SA). The FHE server transciphers Pasta-4 into the BFV domain before evaluation — the cost of this transciphering is the tradeoff for ~10-15x smaller on-chain entries.
+Standard OMR ([Liu & Tromer 2021](https://eprint.iacr.org/2021/1256)) tables use Regev ciphertexts for detection — each entry is ~1-2 KB of lattice ciphertext, too large for on-chain calldata. We replace Regev with Pasta-4 symmetric encryption (~128 B per entry), enabled by the stealth address pairwise key `k_pairwise` from [pq_SA](https://github.com/namnc/pq_SA). The FHE server transciphers Pasta-4 into the BFV domain before evaluation — the cost of this transciphering is the tradeoff for ~8-16x smaller on-chain entries.
 
 The same substitution applies wherever a server must match encrypted entries to recipients without seeing plaintext — on-chain note discovery, encrypted messaging, private notifications.
 
@@ -38,8 +38,8 @@ The two numbers that define the substitution:
 
 **1. Ciphertext size (on-chain cost):**
 - Regev: ~1-2 KB per entry → at 10K entries/day, ~10-20 MB calldata
-- Pasta-4: ~64 B per entry → at 10K entries/day, ~640 KB calldata
-- **~10-15x reduction**
+- Pasta-4: ~128 B per entry → at 10K entries/day, ~1.28 MB calldata
+- **~8-16x reduction**
 
 **2. Transcipher overhead (server cost):**
 - Standard OMR: evaluate Regev directly under BFV (no transciphering needed — Regev is already lattice-compatible)
@@ -79,7 +79,7 @@ The 128 BFV rotations per note (Pasta-4 affine layers) dominate wall-clock time.
 
 ## What to Benchmark Next
 
-The missing comparison: **Pasta transcipher vs direct Regev evaluation** at the same BFV parameters. This quantifies the exact computational premium for the ~10-15x ciphertext reduction. Without this, we know the calldata savings but not whether the server cost is acceptable.
+The missing comparison: **Pasta transcipher vs direct Regev evaluation** at the same BFV parameters. This quantifies the exact computational premium for the ~8-16x ciphertext reduction. Without this, we know the calldata savings but not whether the server cost is acceptable.
 
 ## Open Problems
 
@@ -89,13 +89,13 @@ The missing comparison: **Pasta transcipher vs direct Regev evaluation** at the 
 
 ## Implementation
 
-30 tests (23 Rust + 10 Solidity). B0-B3 complete.
+30 tests (23 Rust + 7 Solidity). B0-B3 complete.
 
 - `primitives-omr/src/pasta4.rs` — Pasta-4 cipher, 100 C++ cross-validated vectors
 - `primitives-omr/src/pvw.rs` — PVW detection, 10K zero-FN verified
 - `primitives-omr/src/lwr_prf.rs` — LWR PRF for Pasta key derivation from k_pairwise
 - `omr-core/src/` — C++ FHE evaluation binary (SEAL 4.1.2)
-- `contracts/src/NoteRegistryOMR.sol` — postNoteOMR with 52B pvwClue
+- `contracts/src/NoteRegistryOMR.sol` — postNoteOMR with 128B Pasta-4 ciphertext
 
 ## Privacy Protocol Scanning Landscape
 

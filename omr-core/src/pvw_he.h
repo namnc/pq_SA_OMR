@@ -10,7 +10,8 @@ constexpr uint64_t PVW_Q = 65537;
 constexpr uint64_t PVW_THRESHOLD = PVW_Q / 512;  // 128 (FP rate ~0.39%)
 
 /// Encrypt PVW secret key into BFV ciphertext (batch encoded).
-/// sk elements go into slots 0..PVW_N-1, rest are zero.
+/// sk elements go into slots 0..PVW_N-1, slot PVW_N = 1 (identity for b),
+/// rest are zero.
 seal::Ciphertext encrypt_pvw_sk(
     const std::vector<uint64_t>& sk,
     seal::Encryptor& encryptor,
@@ -29,6 +30,8 @@ seal::Ciphertext evaluate_pvw_plain(
 /// Evaluate PVW detection on transciphered clue (depth 1: ciphertext × ciphertext).
 /// Used when PVW clue was embedded in a Pasta ciphertext and transciphered to BFV.
 /// he_signal slots 0..PVW_N-1 contain BFV(a[i]), slot PVW_N contains BFV(b).
+/// After multiply: result slots 0..PVW_N-1 = a[i]*sk[i], slot PVW_N = b*1 = b.
+/// Recipient decrypts, sums slots 0..PVW_N-1 to get inner product, compares with slot PVW_N.
 seal::Ciphertext evaluate_pvw_on_transciphered(
     const seal::Ciphertext& encrypted_sk,
     const seal::Ciphertext& he_signal,

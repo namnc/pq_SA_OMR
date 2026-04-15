@@ -2,7 +2,7 @@
 
 **Replacing Regev with Pasta in the OMR Table**
 
-Standard OMR tables contain Regev ciphertexts (~1-2 KB per entry) for detection — too large for on-chain calldata. We replace Regev with Pasta-4 (~64 B), enabled by the stealth address pairwise key `k_pairwise` from [pq_SA](https://github.com/namnc/pq_SA). The tradeoff: the FHE server must transcipher Pasta-4 → BFV before evaluation, adding computational overhead.
+Standard OMR tables contain Regev ciphertexts (~1-2 KB per entry) for detection — too large for on-chain calldata. We replace Regev with Pasta-4 (~128 B), enabled by the stealth address pairwise key `k_pairwise` from [pq_SA](https://github.com/namnc/pq_SA). The tradeoff: the FHE server must transcipher Pasta-4 → BFV before evaluation, adding computational overhead.
 
 The same substitution applies beyond stealth addresses — any system where a server must match encrypted entries to recipients without seeing the plaintext. Examples: on-chain note discovery, encrypted messaging, and private notification services.
 
@@ -18,7 +18,7 @@ The same substitution applies beyond stealth addresses — any system where a se
 | Shared key required? | No (Regev uses recipient's public key) | Yes (`k_pairwise` from stealth address first contact) |
 
 The two numbers that define the tradeoff:
-1. **Ciphertext size**: Regev ~1-2 KB vs Pasta ~64 B → **~10-15x calldata reduction**
+1. **Ciphertext size**: Regev ~1-2 KB vs Pasta ~128 B → **~8-16x calldata reduction**
 2. **Transcipher overhead**: 19.3s/note measured (ARM64, unoptimized) — the cost of the size savings
 
 ## Why k_pairwise

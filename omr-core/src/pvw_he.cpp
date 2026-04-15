@@ -13,6 +13,9 @@ seal::Ciphertext encrypt_pvw_sk(
     for (size_t i = 0; i < PVW_N && i < sk.size(); i++) {
         slots[i] = sk[i];
     }
+    // Place 1 in slot PVW_N so that elementwise multiply preserves b:
+    // product[PVW_N] = b * 1 = b (needed for detection comparison).
+    slots[PVW_N] = 1;
 
     seal::Plaintext pt;
     encoder.encode(slots, pt);
